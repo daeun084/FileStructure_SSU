@@ -205,6 +205,18 @@ void read_page(char* flashFile, int ppn, char* pagebuf){
     free(spare);
 }
 
+// 4 : erase page
+void erase_page(char* flashFile, int pbn){
+    //open file
+    flashfp = fopen(flashFile, "r+");
+
+    // erase block
+    dd_erase(pbn);
+
+    // close fp
+    fclose(flashfp);
+}
+
 
 int main(int argc, char *argv[])
 {	
@@ -219,6 +231,8 @@ int main(int argc, char *argv[])
         write_page(argv[2], atoi(argv[3]), argv[4], argv[5], pagebuf);
     else if(argv[1][0] == 'r')
         read_page(argv[2], atoi(argv[3]), pagebuf);
+    else if(argv[1][0] == 'e')
+        erase_page(argv[2], atoi(argv[3]));
     else
         printf("Invalid input\n");
 
