@@ -159,6 +159,52 @@ void write_page(char* flashFile, int ppn, char* sectorData, char* spareData, cha
     printf("#pagereads=%d #pagewrites=%d #blockerases=%d\n", pageReadCount, pageWriteCount, blockEraseCount);
 }
 
+// 3: read page
+void read_page(char* flashFile, int ppn, char* pagebuf){
+    //open file
+    flashfp = fopen(flashFile, "r+");
+
+    // read data
+    dd_read(ppn, pagebuf);
+
+    // get page instance
+    Page* page = (Page*)pagebuf;
+    char *sector = malloc(SECTOR_SIZE), *spare = malloc(SPARE_SIZE);
+    int sector_index, spare_index;
+
+    //check sector index for 0xFF
+    for(sector_index = 0; sector_index < SECTOR_SIZE; sector_index++){
+        if(page->sector[sector_index] == (char)0xFF)
+            break;
+    }
+
+    // copy meaningful data in *sector
+    for(int i=0; i<sector_index; i++)
+        sector[i] = page->sector[i];
+    sector[sector_index] = '\0';
+
+    // check spare index for 0xFF
+    for(spare_index = 0; spare_index < SPARE_SIZE; spare_index++){
+        if(page->spare[spare_index] == (char)0xFF)
+            break;
+    }
+
+    // copy meaningful data in *spare
+    for(int i=0; i<spare_index; i++)
+        spare[i] = page->spare[i];
+    spare[spare_index] = '\0';
+
+    // print result
+    printf("%s %s\n", sector, spare);
+
+    // close fp
+    fclose(flashfp);
+
+    // free
+    free(sector);
+    free(spare);
+}
+
 
 int main(int argc, char *argv[])
 {	
@@ -171,6 +217,10 @@ int main(int argc, char *argv[])
         create_flash_memory(argv[2], argv[3]);
     else if(argv[1][0] == 'w')
         write_page(argv[2], atoi(argv[3]), argv[4], argv[5], pagebuf);
+    else if(argv[1][0] == 'r')
+        read_page(argv[2], atoi(argv[3]), pagebuf);
+    else
+        printf("Invalid input\n");
 
 
 	// flash memory 파일 생성: 위에서 선언한 flashfp를 사용하여 flash 파일을 생성한다. 그 이유는 fdevicedriver.c에서 
