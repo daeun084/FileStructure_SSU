@@ -122,3 +122,39 @@ fwrite()
     c libraries 함수를 구현할 때 system call을 내부적으로 호출함
     ➡️ 두 함수 중 무엇을 호출하든 상관없음
 
+
+<br><br><br><br>
+
+
+# Hard Disk Drive
+
+### Platter
+- sector
+  - 디스크의 가장 작은 단위
+  - track을 구성함
+- cluster
+  - sector의 집합
+  - **파일 시스템에 할당되는 가장 작은 단위**로, 가상의 단위임
+  - 파일 매니저는 FAT(file allocation table)을 사용해 클러스터의 위치 정보를 저장함
+- extents
+  - 연속적인 저장 공간
+- track
+  - 데이터를 저장하는 길
+- cylinder
+  - 같은 위치에 존재하는 트랙끼리 연결
+
+<br>
+
+## Disk Access
+효율적인 Disk I/O => 디스크에 적게 접근해 비용과 시간을 줄여야 함
+- Seek
+  - header을 데이터가 있는 실린더로 이동시킴
+- Rotate
+  - head와 데이터가 존재하는 sector가 접촉할 수 있도록 cylinder를 회전시킴
+  - 맨 처음 1byte가 header 아래에 위치하도록 회전시킴
+  - rotatioanl delay
+- Transfer
+  - 처음 1byte부터 마지막 byte를 읽을 때까지 계속해서 회전시켜 데이터를 읽음
+  - transfer time
+    - 데이터의 크기가 명시되어 있으면 정확한 시간을 구할 수 있음
+    - $numOfByteTransferred / numOfBytesOnTrack*RotationTime$ 
