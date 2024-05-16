@@ -178,51 +178,74 @@ FIELD getFieldID(char *fieldname){
 }
 
 
+int isValueSame(FIELD f, char *keyval, const STUDENT *s){
+	switch (f){
+		case ID:
+			return strcmp(s->id, keyval);
+		case NAME:
+			return strcmp(s->name, keyval);
+		case DEPT:
+			return strcmp(s->dept, keyval);
+		case YEAR:
+			return strcmp(s->year, keyval);
+		case ADDR:
+			return strcmp(s->addr, keyval);
+		case PHONE:
+			return strcmp(s->phone, keyval);
+		case EMAIL:
+			return strcmp(s->email, keyval);
+		default:
+			return 0;
+	}
+}
+
 
 /**find record**/
 void search(FILE *fp, FIELD f, char *keyval){
 	char recordbuf[MAX_RECORD_SIZE];
 	char fileheaderbuf[FILE_HEADER_SIZE];
 	char pagebuf[PAGE_SIZE];
-	STUDENT *s_list;
 
-		// file header
-		readFileHeader(fp, fileheaderbuf);
+	// file header
+	readFileHeader(fp, fileheaderbuf);
 
-		// 전체 페이지 개수
-		int page_num = atoi(fileheaderbuf[0] + fileheaderbuf[1]);
+	// 전체 페이지 개수
+	int page_num = atoi(fileheaderbuf[0] + fileheaderbuf[1]);
+
+	// 출력을 위한 설정
+	STUDENT s_list[page_num * 20];
+	int n = 0;
 		
-		for (int i = 0 ; i < page_num; i++){
-			// 순차적으로 페이지 read
-			readPage(fp, pagebuf, i);
+	for (int i = 0 ; i < page_num; i++){
+		// 순차적으로 페이지 read
+		readPage(fp, pagebuf, i);
 
-			// read page's header
-			char pageheaderbuf[PAGE_HEADER_SIZE];
-			memcpy(pageheaderbuf, pagebuf, PAGE_HEADER_SIZE);
+		// read page's header
+		char pageheaderbuf[PAGE_HEADER_SIZE];
+		memcpy(pageheaderbuf, pagebuf, PAGE_HEADER_SIZE);
 
-			// page의 레코드 개수
-			int record_num = atoi(pageheaderbuf[0] + pageheaderbuf[1]);
-			fseek(fp, 6, SEEK_CUR);
+		// page의 레코드 개수
+		int record_num = atoi(pageheaderbuf[0] + pageheaderbuf[1]);
+		fseek(fp, 6, SEEK_CUR);
 			
-			for (int j = 0; j < record_num; j++){
-				// j번째 레코드 읽기
-				getRecFromPagebuf(pagebuf, recordbuf, j);
+		for (int j = 0; j < record_num; j++){
+			// j번째 레코드 읽기
+			getRecFromPagebuf(pagebuf, recordbuf, j);
 
-				// record 객체를 student 객체로 변환
-				STUDENT s;
-				unpack(recordbuf, &s);
+			// record 객체를 student 객체로 변환
+			STUDENT s;
+			unpack(recordbuf, &s);
 
-				// 각 필드 값 비교
-
-
-				// 일치하면 s_list에 추가
-				
-
-			}
+			// 각 필드 값 비교
+			if (isValueSame(f, keyval, &s) == 1 ){
+				// keyval과 s.f의 값이 일치하면 s_list에 추가
+				s_list[n++] = s;
+			}				
 		}
+	}
 
-		// 결과 출력
-		printSearchResult(s_list, sizeof(s_list));
+	// 결과 출력
+	printSearchResult(s_list, n);
 }
 
 
@@ -231,42 +254,51 @@ void insert(FILE *fp, const STUDENT *s){
 	char recordbuf[MAX_RECORD_SIZE];
 	char fileheaderbuf[FILE_HEADER_SIZE];
 	char pagebuf[PAGE_SIZE];
-		// pack student struct to record
-		pack(recordbuf, &s);
+	
+	// pack student struct to record
+	pack(recordbuf, &s);
 
-		// find the last page or make new page
-		// read record file's header 
-		readFileHeader(fp, fileheaderbuf);
+	// find the last page or make new page
+	// read record file's header 
+	readFileHeader(fp, fileheaderbuf);
 
-		// find last page's number
-		int last_page_num = atoi(fileheaderbuf[0] + fileheaderbuf[1]);
+	// find last page's number
+	int last_page_num = atoi(fileheaderbuf[0] + fileheaderbuf[1]);
 
-		// read last page
-		readPage(fp, pagebuf, last_page_num);
+	// read last page
+	readPage(fp, pagebuf, last_page_num);
 
-		// read header's free space byte
-		fseek(fp, 2, SEEK_CUR);
+	// compare freespace < recordbuf size	
+	if (memcmp(pagebuf + 2, sizeof(recordbuf), 2) < 0){
+		// allocate new page
+		memset(pagebuf, 0, PAGE_SIZE);
 
-		// compare freespace < recordbuf size	
-		if (memcmp(pagebuf, sizeof(recordbuf), 2) < 0){
-			// allocate new page
-			memset(pagebuf, 0, PAGE_SIZE);
+		// write page's header
+		// #records
+		memset(pagebuf, 0, 2);
+		// freespace
+		memcpy(pagebuf + 2, 448, 2);
 
-			// write page's header
+		// record file's header : 전체 페이지 개수 수정
+		memcpy(fileheaderbuf, last_page_num + 1, 2);	
+		writeFileHeader(fp, fileheaderbuf);
+	}
 
-			// record file's header : 전체 페이지 개수 수정
-		}
+	// write record to page buffer
+	writeRecToPagebuf(pagebuf, recordbuf);
 
-		// write record to page buffer
-		writeRecToPagebuf(pagebuf, recordbuf);
-
-		// page's header : chore #records
-		// page's header : records' offset
+	// page's header : chore #records
+	int record_num = atoi(pagebuf[0] + pagebuf[1]);
+	memcpy(pagebuf, record_num + 1, 2);
 		
+	// page's header : records' offset
+	size_t record_size = strlen(recordbuf);
+	int offset_location = 8 + 2 * (record_num - 1);
+	int last_offset = atoi(pagebuf[offset_location] + pagebuf[offset_location + 1]);
+	memcpy(pagebuf + offset_location + 2, last_offset + record_size, 2);
 		
-		// write page buffer to record file
-		writePage(fp, pagebuf, last_page_num);
-
+	// write page buffer to record file
+	writePage(fp, pagebuf, last_page_num);
 }
 
 
