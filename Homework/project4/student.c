@@ -77,8 +77,11 @@ int readPage(FILE *fp, char *pagebuf, int pagenum){
 int getRecFromPagebuf(const char *pagebuf, char *recordbuf, int recordnum){
 	// read offset
 	int offset = 8 + 2 * recordnum;
-	int record_end = atoi(pagebuf[offset] + pagebuf[offset + 1]);
-	int record_start = atoi(pagebuf[offset - 2] + pagebuf[offset - 1]);
+
+	int16_t record_end, record_start;
+	memcpy(&record_end, pagebuf + offset, 2);
+	memcpy(&record_start, pagebuf + offset - 2, 2);
+
 	int record_len = record_end - record_start;
 
 	if (record_len > 100){
@@ -94,7 +97,7 @@ int getRecFromPagebuf(const char *pagebuf, char *recordbuf, int recordnum){
 void unpack(const char *recordbuf, STUDENT *s){
 	int offset = 0;
 	while (offset < 7){
-		char *field = strtok(recordbuf, "#");
+		char *field = strtok((char *)recordbuf, "#");
 		switch (offset) {
 			case 0: strcpy(s->id, field); break;
 			case 1: strcpy(s->name, field); break;
@@ -126,19 +129,21 @@ int writePage(FILE *fp, const char *pagebuf, int pagenum){
 
 void writeRecToPagebuf(char *pagebuf, const char *recordbuf){
 	// find page's record num
-	int record_num = atoi(pagebuf[0] + pagebuf[1]);
+	int16_t record_num;
+	memcpy(&record_num, pagebuf, 2);
 
 	// last record's offset locatioin in header
 	int offset_location = 8 + 2 * record_num;
 	
 	// record start index
-	int record_start = atoi(pagebuf[offset_location] + pagebuf[offset_location + 1]) + 1;
+	int16_t record_start;
+	memcpy(&record_start, pagebuf + offset_location, 2);
 
 	// write record data in pagebuf
-	strncpy(pagebuf + record_start, recordbuf, strlen(recordbuf));
+	strncpy(pagebuf + record_start + 1, recordbuf, strlen(recordbuf));
 }
 
-int pack_filled(char *recordbuf, char *field, int offset){
+int pack_filled(char *recordbuf, const char *field, int offset){
 	size_t len = strlen(field);
 	memcpy(recordbuf + offset, field, len);
 	offset += len;
@@ -148,13 +153,13 @@ int pack_filled(char *recordbuf, char *field, int offset){
 
 void pack(char *recordbuf, const STUDENT *s){
 	int offset = 0;
-	offset = (recordbuf, s->id, offset);
-	offset = (recordbuf, s->name, offset);
-	offset = (recordbuf, s->dept, offset);
-	offset = (recordbuf, s->year, offset);
-	offset = (recordbuf, s->addr, offset);
-	offset = (recordbuf, s->phone, offset);
-	offset = (recordbuf, s->email, offset);
+	offset = pack_filled(recordbuf, s->id, offset);
+	offset = pack_filled(recordbuf, s->name, offset);
+	offset = pack_filled(recordbuf, s->dept, offset);
+	offset = pack_filled(recordbuf, s->year, offset);
+	offset = pack_filled(recordbuf, s->addr, offset);
+	offset = pack_filled(recordbuf, s->phone, offset);
+	offset = pack_filled(recordbuf, s->email, offset);
 }
 
 
@@ -210,7 +215,8 @@ void search(FILE *fp, FIELD f, char *keyval){
 	readFileHeader(fp, fileheaderbuf);
 
 	// 전체 페이지 개수
-	int page_num = atoi(fileheaderbuf[0] + fileheaderbuf[1]);
+	int16_t page_num;
+	memcpy(&page_num, fileheaderbuf, 2);
 
 	// 출력을 위한 설정
 	STUDENT s_list[page_num * 20];
@@ -225,7 +231,8 @@ void search(FILE *fp, FIELD f, char *keyval){
 		memcpy(pageheaderbuf, pagebuf, PAGE_HEADER_SIZE);
 
 		// page의 레코드 개수
-		int record_num = atoi(pageheaderbuf[0] + pageheaderbuf[1]);
+		int16_t record_num;
+		memcpy(&record_num, pageheaderbuf, 2);
 		fseek(fp, 6, SEEK_CUR);
 			
 		for (int j = 0; j < record_num; j++){
@@ -256,20 +263,24 @@ void insert(FILE *fp, const STUDENT *s){
 	char pagebuf[PAGE_SIZE];
 	
 	// pack student struct to record
-	pack(recordbuf, &s);
+	pack(recordbuf, s);
 
 	// find the last page or make new page
 	// read record file's header 
 	readFileHeader(fp, fileheaderbuf);
 
 	// find last page's number
-	int last_page_num = atoi(fileheaderbuf[0] + fileheaderbuf[1]);
+	int16_t last_page_num;
+	memcpy(&last_page_num, fileheaderbuf, 2);
 
 	// read last page
 	readPage(fp, pagebuf, last_page_num);
 
 	// compare freespace < recordbuf size	
-	if (memcmp(pagebuf + 2, sizeof(recordbuf), 2) < 0){
+	int16_t freespace_size;
+	memcpy(&freespace_size, pagebuf, 2);
+
+	if (freespace_size < sizeof(recordbuf)){
 		// allocate new page
 		memset(pagebuf, 0, PAGE_SIZE);
 
@@ -277,10 +288,10 @@ void insert(FILE *fp, const STUDENT *s){
 		// #records
 		memset(pagebuf, 0, 2);
 		// freespace
-		memcpy(pagebuf + 2, 448, 2);
+		memcpy(pagebuf + 2, "448", 2);
 
 		// record file's header : 전체 페이지 개수 수정
-		memcpy(fileheaderbuf, last_page_num + 1, 2);	
+		memcpy(fileheaderbuf, (void *)(last_page_num + 1), 2);	
 		writeFileHeader(fp, fileheaderbuf);
 	}
 
@@ -288,14 +299,16 @@ void insert(FILE *fp, const STUDENT *s){
 	writeRecToPagebuf(pagebuf, recordbuf);
 
 	// page's header : chore #records
-	int record_num = atoi(pagebuf[0] + pagebuf[1]);
-	memcpy(pagebuf, record_num + 1, 2);
+	int16_t record_num;
+	memcpy(&record_num, pagebuf, 2);
+	memcpy(pagebuf, (void *)(record_num + 1), 2);
 		
 	// page's header : records' offset
 	size_t record_size = strlen(recordbuf);
 	int offset_location = 8 + 2 * (record_num - 1);
-	int last_offset = atoi(pagebuf[offset_location] + pagebuf[offset_location + 1]);
-	memcpy(pagebuf + offset_location + 2, last_offset + record_size, 2);
+	int16_t last_offset;
+	memcpy(&last_offset, pagebuf + offset_location, 2);
+	memcpy(pagebuf + offset_location + 2, (void *)(last_offset + record_size), 2);
 		
 	// write page buffer to record file
 	writePage(fp, pagebuf, last_page_num);
