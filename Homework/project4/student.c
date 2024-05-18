@@ -1,8 +1,9 @@
 #include <stdio.h>	
-#include <student.h>
+#include "student.h"
 #include <string.h>
+#include <stdlib.h>
 
-const char* fields[] = {"id", "name", "dept", "year", "addr", "phone", "email"};
+const char* fields[] = {"ID", "NAME", "DEPT", "YEAR", "ADDR", "PHONE", "EMAIL"};
 
 
 int readPage(FILE *fp, char *pagebuf, int pagenum);
@@ -39,22 +40,18 @@ void parse_input_to_student(char *argv[], STUDENT *s){
 	for (int i = 3; i < 10; i++){
 		// find field name
 		char* field = strtok(argv[i], "=");
+        char* value = strtok(NULL, "=");
+        FIELD f = getFieldID(field);
 
-		for (int j = 0; j < sizeof(fields) / sizeof(fields[0]); j++) {
-
-			if (strcmp(field, fields[j]) == 0) {
-				switch (j) {
-					case 0: strcpy(s->id, argv[i]); break;
-					case 1: strcpy(s->name, argv[i]); break;
-					case 2: strcpy(s->dept, argv[i]); break;
-					case 3: strcpy(s->year, argv[i]); break;
-					case 4: strcpy(s->addr, argv[i]); break;
-					case 5: strcpy(s->phone, argv[i]); break;
-					case 6: strcpy(s->email, argv[i]); break;
-				}
-				break;
-			}
-		}
+        switch (f){
+            case ID: strcpy(s->id, value); break;
+            case NAME: strcpy(s->name, value); break;
+            case DEPT: strcpy(s->dept, value); break;
+            case YEAR: strcpy(s->year, value); break;
+            case ADDR: strcpy(s->addr, value); break;
+            case PHONE: strcpy(s->phone, value); break;
+            case EMAIL: strcpy(s->email, value); break;
+        }
 	}
 }
 
@@ -67,6 +64,7 @@ int readPage(FILE *fp, char *pagebuf, int pagenum){
 	// read page data
 	int ret;
 	ret = fread(pagebuf, PAGE_SIZE, 1, fp);
+	printf("[ReadPage] pagebuf : %02X %02X %02X\n", pagebuf[0], pagebuf[1], pagebuf[2]);
 	if (ret == 1) 
 		return 1;
 	else 
@@ -91,6 +89,7 @@ int getRecFromPagebuf(const char *pagebuf, char *recordbuf, int recordnum){
 
 	// read record data
 	strncpy(recordbuf, pagebuf + record_start + 1, record_len);
+	return 0;
 }
 
 
@@ -152,6 +151,10 @@ int pack_filled(char *recordbuf, const char *field, int offset){
 }
 
 void pack(char *recordbuf, const STUDENT *s){
+	// init recordbuf
+	memset(recordbuf, 0, MAX_RECORD_SIZE);
+
+	// set offset
 	int offset = 0;
 	offset = pack_filled(recordbuf, s->id, offset);
 	offset = pack_filled(recordbuf, s->name, offset);
@@ -165,6 +168,7 @@ void pack(char *recordbuf, const STUDENT *s){
 
 /**switch**/
 FIELD getFieldID(char *fieldname){
+
 	for (int i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
 		if (strcmp(fieldname, fields[i]) == 0) {
 			switch (i) {
@@ -264,6 +268,7 @@ void insert(FILE *fp, const STUDENT *s){
 	
 	// pack student struct to record
 	pack(recordbuf, s);
+	printf("[Insert] recordbuf_size : %lu\n", strlen(recordbuf));	
 
 	// find the last page or make new page
 	// read record file's header 
@@ -272,6 +277,9 @@ void insert(FILE *fp, const STUDENT *s){
 	// find last page's number
 	int16_t last_page_num;
 	memcpy(&last_page_num, fileheaderbuf, 2);
+	// printf("[Insert] fileheaderbuf : %s\n", fileheaderbuf);
+	printf("[Insert] fileheaderbuf : %0X %0X %0X %02X ...\n", fileheaderbuf[0], fileheaderbuf[1], fileheaderbuf[2], fileheaderbuf[3]);	
+	printf("[Insert] last_page_num : %d\n", last_page_num);
 
 	// read last page
 	readPage(fp, pagebuf, last_page_num);
@@ -279,8 +287,10 @@ void insert(FILE *fp, const STUDENT *s){
 	// compare freespace < recordbuf size	
 	int16_t freespace_size;
 	memcpy(&freespace_size, pagebuf, 2);
+	printf("[Insert] freespace_size : %d\n", freespace_size);
 
-	if (freespace_size < sizeof(recordbuf)){
+
+	if (freespace_size < strlen(recordbuf)){
 		// allocate new page
 		memset(pagebuf, 0, PAGE_SIZE);
 
@@ -291,17 +301,19 @@ void insert(FILE *fp, const STUDENT *s){
 		memcpy(pagebuf + 2, "448", 2);
 
 		// record file's header : 전체 페이지 개수 수정
-		memcpy(fileheaderbuf, (void *)(last_page_num + 1), 2);	
+		memcpy(fileheaderbuf, (void *)(intptr_t)(last_page_num + 1), 2);	
 		writeFileHeader(fp, fileheaderbuf);
 	}
 
 	// write record to page buffer
 	writeRecToPagebuf(pagebuf, recordbuf);
+	printf("[Insert] writeRecToPagebuf\n");
+
 
 	// page's header : chore #records
 	int16_t record_num;
 	memcpy(&record_num, pagebuf, 2);
-	memcpy(pagebuf, (void *)(record_num + 1), 2);
+	memcpy(pagebuf, (void *)(intptr_t)(record_num + 1), 2);
 		
 	// page's header : records' offset
 	size_t record_size = strlen(recordbuf);
@@ -312,6 +324,7 @@ void insert(FILE *fp, const STUDENT *s){
 		
 	// write page buffer to record file
 	writePage(fp, pagebuf, last_page_num);
+	printf("[Insert] writePage\n");
 }
 
 
@@ -319,7 +332,9 @@ void insert(FILE *fp, const STUDENT *s){
 int readFileHeader(FILE *fp, char *headerbuf){
 	int ret;
 
-	ret = fread(headerbuf, FILE_HEADER_SIZE, 1, fp);
+	fseek(fp, 0, SEEK_SET);
+	ret = fread(headerbuf, 1, FILE_HEADER_SIZE, fp);
+	printf("[ReadFileHeader] headerbuf : %02X %02X %02X %02X\n", headerbuf[0], headerbuf[1], headerbuf[2], headerbuf[3]);
 	if (ret == 1)
 		return 1;
 	else
@@ -349,13 +364,31 @@ int main(int argc, char *argv[])
 	}
 
 	// open record file
-	fp = fopen(argv[2], 'rw+');
-	if (fp == NULL){
-        printf("[*] Error : File Open Error\n");
-        exit(1);
+	fp = fopen(argv[2], "r+");
+    if (fp == NULL) {
+        // 파일이 존재하지 않으면 "w+" 모드로 파일을 새로 생성
+        fp = fopen(argv[2], "w+");
+        if (fp == NULL) {
+            printf("[*] Error : File Open Error\n");
+            exit(1);
+        }
+
+		// 파일의 맨 앞 2B를 0으로 초기화
+    	fwrite("0", 1, 2, fp);
+
+		// reserved space + 0 page
+		fseek(fp, 14 + 512, SEEK_CUR);
+    	fwrite("\0", 1, 1, fp);
+
+		// init 0 page
+		int16_t init_free_space = 448;
+		fseek(fp, 16, SEEK_SET);
+		fwrite("0", 1, 2, fp);
+		fwrite(&init_free_space, sizeof(init_free_space), 1, fp);
     }
-	
-	if (argv[1][0] == 'i'){
+
+    
+	if (argv[1][1] == 'i'){
 		if (argc != 10){
 			printf("[*] Error : Invalid argc\n");
 			exit(1);
@@ -368,7 +401,7 @@ int main(int argc, char *argv[])
 		// insert record data to record file
 		insert(fp, &s);
 
-	} else if (argv[1][0] == 's'){
+	} else if (argv[1][1] == 's'){
 		if (argc != 4){
 			printf("[*] Error : Invalid argc\n");
 			exit(1);
@@ -384,6 +417,8 @@ int main(int argc, char *argv[])
 		printf("[*] Error : Invalid argument\n");
         exit(1);
 	}
+
+	fclose(fp);
 
 	return 1;
 }
