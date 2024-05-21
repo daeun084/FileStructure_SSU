@@ -72,14 +72,22 @@ int readPage(FILE *fp, char *pagebuf, int pagenum){
 
 
 int getRecFromPagebuf(const char *pagebuf, char *recordbuf, int recordnum){
-	// read offset
-	int offset = 8 + 2 * recordnum;
 
-	int16_t record_end, record_start;
-	memcpy(&record_end, pagebuf + offset, 2);
-	memcpy(&record_start, pagebuf + offset - 2, 2);
+	// last record's offset location in page's header
+	int offset_location;
+	if (recordnum == 0) offset_location = 8;
+	else offset_location = 8 + 2 * (recordnum - 1);
+	
+	// record start index
+	uint16_t record_start, record_end;
+	memcpy(&record_start, pagebuf + offset_location, 2);
+	memcpy(&record_end, pagebuf + offset_location + 2, 2);
 
+	// get record's length
+	record_start = record_start % PAGE_SIZE - FILE_HEADER_SIZE;
+	record_end = record_end % PAGE_SIZE - FILE_HEADER_SIZE;
 	int record_len = record_end - record_start;
+
 
 	if (record_len > 100){
 		printf("[*] Error : Invalid Record Length\n");
@@ -87,15 +95,17 @@ int getRecFromPagebuf(const char *pagebuf, char *recordbuf, int recordnum){
 	}
 
 	// read record data
-	strncpy(recordbuf, pagebuf + record_start + 1, record_len);
+	memcpy(recordbuf, pagebuf + record_start, record_len);
 	return 0;
 }
 
 
 void unpack(const char *recordbuf, STUDENT *s){
 	int offset = 0;
-	while (offset < 7){
-		char *field = strtok((char *)recordbuf, "#");
+	char *saveptr = NULL;
+	char *field = strtok_r((char *)recordbuf, "#", &saveptr);
+
+	while (field != NULL || offset < 7){
 		switch (offset) {
 			case 0: strcpy(s->id, field); break;
 			case 1: strcpy(s->name, field); break;
@@ -106,6 +116,7 @@ void unpack(const char *recordbuf, STUDENT *s){
 			case 6: strcpy(s->email, field); break;
 		}
 		offset++;
+		field = strtok_r(NULL, "#", &saveptr);
 	}
 }
 
@@ -115,22 +126,18 @@ int writePage(FILE *fp, const char *pagebuf, int pagenum){
 	// fseek
 	int page_location = FILE_HEADER_SIZE + PAGE_SIZE * pagenum;
 	fseek(fp, page_location, SEEK_SET);
-	printf("[WritePage] pagenum = %d, location = %d\n", pagenum, page_location);
 
 	// write page data
 	int ret;
 	ret = fwrite(pagebuf, PAGE_SIZE, 1, fp);
-	if (ret == 1) 
-		return 1;
-	else 
-		return 0;
+	if (ret == 1) return 1;
+	else return 0;
 }
 
 void writeRecToPagebuf(char *pagebuf, const char *recordbuf){
 	// find page's record num
 	uint16_t record_num;
 	memcpy(&record_num, pagebuf, 2);
-	printf("[WriteRecToPagebuf] recordNum = %hd, pagebuf = %s\n", record_num, pagebuf);
 
 	// last record's offset location in header
 	int offset_location;
@@ -140,18 +147,20 @@ void writeRecToPagebuf(char *pagebuf, const char *recordbuf){
 	// record start index
 	uint16_t record_start;
 	memcpy(&record_start, pagebuf + offset_location, 2);
-	printf("[WriteRecToPagebuf] record_start = %hd\n", record_start);
 
 	// write record data in pagebuf
 	record_start = record_start % PAGE_SIZE - FILE_HEADER_SIZE;
 	memcpy(pagebuf + record_start, recordbuf, strlen(recordbuf));
-	printf("[WriteRecToPagebuf] recordbuf = %s, pagebuf = %s\n", recordbuf, pagebuf);
 }
 
 int pack_filled(char *recordbuf, const char *field, int offset){
 	size_t len = strlen(field);
 	memcpy(recordbuf + offset, field, len);
+
+	// set offset
 	offset += len;
+
+	// add dilimiter
 	recordbuf[offset++] = '#';
 	return offset;
 }
@@ -210,16 +219,16 @@ int isValueSame(FIELD f, char *keyval, const STUDENT *s){
 		case EMAIL:
 			return strcmp(s->email, keyval);
 		default:
-			return 0;
+			return 1;
 	}
 }
 
 
 /**find record**/
 void search(FILE *fp, FIELD f, char *keyval){
-	char recordbuf[MAX_RECORD_SIZE];
-	char fileheaderbuf[FILE_HEADER_SIZE];
-	char pagebuf[PAGE_SIZE];
+	char recordbuf[MAX_RECORD_SIZE] = {0};
+	char fileheaderbuf[FILE_HEADER_SIZE] = {0};
+	char pagebuf[PAGE_SIZE] = {0};
 
 	// file header
 	readFileHeader(fp, fileheaderbuf);
@@ -236,14 +245,9 @@ void search(FILE *fp, FIELD f, char *keyval){
 		// 순차적으로 페이지 read
 		readPage(fp, pagebuf, i);
 
-		// read page's header
-		char pageheaderbuf[PAGE_HEADER_SIZE];
-		memcpy(pageheaderbuf, pagebuf, PAGE_HEADER_SIZE);
-
 		// page의 레코드 개수
 		int16_t record_num;
-		memcpy(&record_num, pageheaderbuf, 2);
-		fseek(fp, 6, SEEK_CUR);
+		memcpy(&record_num, pagebuf, 2);
 			
 		for (int j = 0; j < record_num; j++){
 			// j번째 레코드 읽기
@@ -254,13 +258,12 @@ void search(FILE *fp, FIELD f, char *keyval){
 			unpack(recordbuf, &s);
 
 			// 각 필드 값 비교
-			if (isValueSame(f, keyval, &s) == 1 ){
+			if (isValueSame(f, keyval, &s) == 0 ){
 				// keyval과 s.f의 값이 일치하면 s_list에 추가
 				s_list[n++] = s;
 			}				
 		}
 	}
-
 	// 결과 출력
 	printSearchResult(s_list, n);
 }
@@ -274,7 +277,6 @@ void insert(FILE *fp, const STUDENT *s){
 	
 	// pack student struct to record
 	pack(recordbuf, s);
-	printf("[Insert] recordbuf_size : %lu\n", strlen(recordbuf));	
 
 	// find the last page or make new page
 	// read record file's header 
@@ -283,7 +285,6 @@ void insert(FILE *fp, const STUDENT *s){
 	// find last page's number
 	uint16_t last_page_num;
 	memcpy(&last_page_num, fileheaderbuf, 2);
-	printf("[Insert] last_page_num : %u\n", last_page_num - 1);
 
 	// read last page
 	readPage(fp, pagebuf, last_page_num - 1);
@@ -291,13 +292,13 @@ void insert(FILE *fp, const STUDENT *s){
 	// compare freespace < recordbuf size	
 	uint16_t freespace_size;
 	memcpy(&freespace_size, pagebuf + 2, 2);
-	printf("[Insert] freespace_size : %d\n", freespace_size);
 
+	// cmp freespace, recordbuf's len
 	if (freespace_size < strlen(recordbuf)){
-		printf("[Insert] --allocate new page--\n");
 		// allocate new page
 		memset(pagebuf, 0, PAGE_SIZE);
 
+		// init new page's header
 		uint16_t num_records = 0;
     	uint16_t free_space = PAGE_SIZE - PAGE_HEADER_SIZE;
 		uint32_t reserved_space = 0;
@@ -307,32 +308,21 @@ void insert(FILE *fp, const STUDENT *s){
     	memcpy(pagebuf + 4, &reserved_space, 4);
 		memcpy(pagebuf + 8, &first_offset, 2);
 		freespace_size = free_space;
-		printf("freespace = %d, pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", freespace_size, pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
 
 		// record file's header : 전체 페이지 개수 수정		
 		last_page_num = last_page_num + 1;
 		memcpy(fileheaderbuf, &last_page_num, 2);	
 		writeFileHeader(fp, fileheaderbuf);
-		printf("new page num = %d, pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", last_page_num, pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
-		printf("new file header =%x %x %x %x\n", fileheaderbuf[0], fileheaderbuf[1], fileheaderbuf[2], fileheaderbuf[3]);
 	}
 
 	// write record to page buffer
 	writeRecToPagebuf(pagebuf, recordbuf);
-	printf("[Insert] writeRecToPagebuf\n");
-	printf("pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
-
 
 	// page's header : chore #records
 	uint16_t record_num;
 	memcpy(&record_num, pagebuf, 2);	
 	record_num = record_num + 1;
 	memcpy(pagebuf, &record_num, 2);
-	printf("[Insert] recordnum = %d\n", record_num);
-		
-	printf("[Insert] after chore #records / pagebuf = %s\n", pagebuf);
-	printf("pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
-
 
 	// page's header : records' offset
 	int record_size = strlen(recordbuf);
@@ -348,57 +338,41 @@ void insert(FILE *fp, const STUDENT *s){
 
 		uint16_t last_offset;
 		memcpy(&last_offset, pagebuf + offset_location, 2);
-		printf("rec's offset : lastoffset = %d\n", last_offset);
 
 		new_offset = last_offset + record_size;
-		printf("rec's offset : newoffset = %d\n", new_offset);
 		memcpy(pagebuf + offset_location + 2, &new_offset, 2);
 	}
-		
-	printf("[Insert] after chore offsets / pagebuf = %s, new_offset = %ud\n", pagebuf, new_offset);
-	printf("pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
-
 
 	// page's header : freespace
 	uint16_t new_freespace = freespace_size - record_size;
 	memcpy(pagebuf + 2, &new_freespace, 2);
 
-	printf("[Insert] after chore freespace / pagebuf = %s, new_freespace=%d\n", pagebuf, new_freespace);
-	printf("pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
-
-
 	// write page buffer to record file
 	writePage(fp, pagebuf, last_page_num - 1);
-	printf("[Insert] writePage\n");
 }
 
 
 /**file header**/
 int readFileHeader(FILE *fp, char *headerbuf){
-	int ret;
-
+	// fseek
 	fseek(fp, 0, SEEK_SET);
+
+	int ret;
 	ret = fread(headerbuf, FILE_HEADER_SIZE, 1, fp);
-	uint32_t hb;
-	memcpy(&hb, headerbuf, 4);
-	printf("[ReadFileHeader] headerbuf : %d\n", hb);
-	if (ret == 1)
-		return 1;
-	else
-		return 0;
+	
+	if (ret == 1) return 1;
+	else return 0;
 }
 
 int writeFileHeader(FILE *fp, const char *headerbuf){
-	int ret;
-	
+	// fseek
 	fseek(fp, 0, SEEK_SET);
-	ret = fwrite(headerbuf, FILE_HEADER_SIZE, 1, fp);
-	if (ret == 1)
-		return 1;
-	else
-		return 0;
-}
 
+	int ret;
+	ret = fwrite(headerbuf, FILE_HEADER_SIZE, 1, fp);
+	if (ret == 1) return 1;
+	else return 0;
+}
 
 
 int main(int argc, char *argv[])
@@ -415,7 +389,6 @@ int main(int argc, char *argv[])
 	fp = fopen(argv[2], "r+");
     if (fp == NULL) {
         // 파일이 존재하지 않으면 "w+" 모드로 파일을 새로 생성
-		printf("new file\n");
         fp = fopen(argv[2], "w+");
         if (fp == NULL) {
             printf("[*] Error : File Open Error\n");
@@ -426,6 +399,7 @@ int main(int argc, char *argv[])
 		char fileheaderbuf[FILE_HEADER_SIZE] = {0};
 		uint16_t num_pages = 1;
     	uint32_t reserved_space = 0;
+
 		memcpy(fileheaderbuf, &num_pages, 2);
 		writeFileHeader(fp, fileheaderbuf);
 
@@ -435,11 +409,11 @@ int main(int argc, char *argv[])
 		uint16_t num_records = 0;
     	uint16_t free_space = PAGE_SIZE - PAGE_HEADER_SIZE;
 		uint16_t first_offset = PAGE_HEADER_SIZE + FILE_HEADER_SIZE;
+
     	memcpy(pagebuf, &num_records, 2);
     	memcpy(pagebuf + 2, &free_space, 2);
     	memcpy(pagebuf + 4, &reserved_space, 4);
 		memcpy(pagebuf + 8, &first_offset, 2);
-		printf("pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
 		writePage(fp, pagebuf, 0);
     }
 
@@ -465,9 +439,11 @@ int main(int argc, char *argv[])
 		
 		// get field name
 		char* fieldname = strtok(argv[3], "=");
+		char* keyval = strtok(NULL, "=");
 		FIELD f = getFieldID(fieldname);
+
 		// search record
-		search(fp, f, argv[3]);
+		search(fp, f, keyval);
 
 	} else {
 		printf("[*] Error : Invalid argument\n");
