@@ -64,9 +64,6 @@ int readPage(FILE *fp, char *pagebuf, int pagenum){
 	// read page data
 	int ret;
 	ret = fread(pagebuf, PAGE_SIZE, 1, fp);
-	// printf("[ReadPage] pagebuf : %C %C %C %C\n", pagebuf[0], pagebuf[1], pagebuf[2], pagebuf[3]);
-	printf("[ReadPage] pagebuf : %s\n", pagebuf);
-
 	if (ret == 1) 
 		return 1;
 	else 
@@ -118,6 +115,7 @@ int writePage(FILE *fp, const char *pagebuf, int pagenum){
 	// fseek
 	int page_location = FILE_HEADER_SIZE + PAGE_SIZE * pagenum;
 	fseek(fp, page_location, SEEK_SET);
+	printf("[WritePage] pagenum = %d, location = %d\n", pagenum, page_location);
 
 	// write page data
 	int ret;
@@ -134,8 +132,10 @@ void writeRecToPagebuf(char *pagebuf, const char *recordbuf){
 	memcpy(&record_num, pagebuf, 2);
 	printf("[WriteRecToPagebuf] recordNum = %hd, pagebuf = %s\n", record_num, pagebuf);
 
-	// last record's offset locatioin in header
-	int offset_location = 8 + 2 * record_num;
+	// last record's offset location in header
+	int offset_location;
+	if (record_num == 0) offset_location = 8;
+	else offset_location = 8 + 2 * (record_num - 1);
 	
 	// record start index
 	uint16_t record_start;
@@ -143,7 +143,8 @@ void writeRecToPagebuf(char *pagebuf, const char *recordbuf){
 	printf("[WriteRecToPagebuf] record_start = %hd\n", record_start);
 
 	// write record data in pagebuf
-	strncpy(pagebuf + record_start, recordbuf, strlen(recordbuf));
+	record_start = record_start % PAGE_SIZE - FILE_HEADER_SIZE;
+	memcpy(pagebuf + record_start, recordbuf, strlen(recordbuf));
 	printf("[WriteRecToPagebuf] recordbuf = %s, pagebuf = %s\n", recordbuf, pagebuf);
 }
 
@@ -297,58 +298,77 @@ void insert(FILE *fp, const STUDENT *s){
 		// allocate new page
 		memset(pagebuf, 0, PAGE_SIZE);
 
-		// write page's header
-		// #records
 		uint16_t num_records = 0;
-		memcpy(pagebuf, &num_records, 2);
-
-		// freespace
     	uint16_t free_space = PAGE_SIZE - PAGE_HEADER_SIZE;
-		memcpy(pagebuf + 2, &free_space, 2);
-
-		// reserved_space
-    	uint32_t reserved_space = 0;
+		uint32_t reserved_space = 0;
+		uint16_t first_offset = FILE_HEADER_SIZE + PAGE_SIZE * (last_page_num) + PAGE_HEADER_SIZE;
+    	memcpy(pagebuf, &num_records, 2);
+    	memcpy(pagebuf + 2, &free_space, 2);
     	memcpy(pagebuf + 4, &reserved_space, 4);
+		memcpy(pagebuf + 8, &first_offset, 2);
+		freespace_size = free_space;
+		printf("freespace = %d, pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", freespace_size, pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
 
 		// record file's header : 전체 페이지 개수 수정		
-		uint16_t num_pages = last_page_num + 1;
-		memcpy(fileheaderbuf, &num_pages, 2);	
+		last_page_num = last_page_num + 1;
+		memcpy(fileheaderbuf, &last_page_num, 2);	
 		writeFileHeader(fp, fileheaderbuf);
+		printf("new page num = %d, pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", last_page_num, pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
+		printf("new file header =%x %x %x %x\n", fileheaderbuf[0], fileheaderbuf[1], fileheaderbuf[2], fileheaderbuf[3]);
 	}
 
 	// write record to page buffer
 	writeRecToPagebuf(pagebuf, recordbuf);
 	printf("[Insert] writeRecToPagebuf\n");
+	printf("pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
+
 
 	// page's header : chore #records
 	uint16_t record_num;
 	memcpy(&record_num, pagebuf, 2);	
-	printf("[Insert] recordnum = %d\n", record_num);
-	record_num += 1;
+	record_num = record_num + 1;
 	memcpy(pagebuf, &record_num, 2);
+	printf("[Insert] recordnum = %d\n", record_num);
 		
 	printf("[Insert] after chore #records / pagebuf = %s\n", pagebuf);
+	printf("pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
+
 
 	// page's header : records' offset
-	size_t record_size = strlen(recordbuf);
-	int offset_location = 8 + 2 * (record_num - 1);
+	int record_size = strlen(recordbuf);
+	int offset_location;
+	uint16_t new_offset;
 
-	uint16_t last_offset;
-	memcpy(&last_offset, pagebuf + offset_location, 2);
+	if (record_num == 1){
+		// first record
+		new_offset = FILE_HEADER_SIZE + PAGE_SIZE * (last_page_num - 1) + PAGE_HEADER_SIZE +record_size;
+		memcpy(pagebuf + 8, &new_offset, 2);
+	} else {
+		offset_location = 8 + 2 * (record_num - 2);
 
-	uint16_t new_offset = last_offset + record_size;
-	memcpy(pagebuf + offset_location + 2, &new_offset, 2);
+		uint16_t last_offset;
+		memcpy(&last_offset, pagebuf + offset_location, 2);
+		printf("rec's offset : lastoffset = %d\n", last_offset);
+
+		new_offset = last_offset + record_size;
+		printf("rec's offset : newoffset = %d\n", new_offset);
+		memcpy(pagebuf + offset_location + 2, &new_offset, 2);
+	}
 		
-	printf("[Insert] after chore offsets / pagebuf = %s, last_offset = %d, new_offset = %d\n", pagebuf, last_offset, new_offset);
+	printf("[Insert] after chore offsets / pagebuf = %s, new_offset = %ud\n", pagebuf, new_offset);
+	printf("pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
+
 
 	// page's header : freespace
-	uint16_t new_freespace = freespace_size - strlen(recordbuf);
+	uint16_t new_freespace = freespace_size - record_size;
 	memcpy(pagebuf + 2, &new_freespace, 2);
 
 	printf("[Insert] after chore freespace / pagebuf = %s, new_freespace=%d\n", pagebuf, new_freespace);
+	printf("pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
+
 
 	// write page buffer to record file
-	writePage(fp, pagebuf, last_page_num);
+	writePage(fp, pagebuf, last_page_num - 1);
 	printf("[Insert] writePage\n");
 }
 
@@ -359,7 +379,9 @@ int readFileHeader(FILE *fp, char *headerbuf){
 
 	fseek(fp, 0, SEEK_SET);
 	ret = fread(headerbuf, FILE_HEADER_SIZE, 1, fp);
-	printf("[ReadFileHeader] headerbuf : %s\n", headerbuf);
+	uint32_t hb;
+	memcpy(&hb, headerbuf, 4);
+	printf("[ReadFileHeader] headerbuf : %d\n", hb);
 	if (ret == 1)
 		return 1;
 	else
@@ -368,7 +390,8 @@ int readFileHeader(FILE *fp, char *headerbuf){
 
 int writeFileHeader(FILE *fp, const char *headerbuf){
 	int ret;
-
+	
+	fseek(fp, 0, SEEK_SET);
 	ret = fwrite(headerbuf, FILE_HEADER_SIZE, 1, fp);
 	if (ret == 1)
 		return 1;
@@ -404,7 +427,6 @@ int main(int argc, char *argv[])
 		uint16_t num_pages = 1;
     	uint32_t reserved_space = 0;
 		memcpy(fileheaderbuf, &num_pages, 2);
-		memcpy(fileheaderbuf + 2, &reserved_space, 14);
 		writeFileHeader(fp, fileheaderbuf);
 
 		// init 0 page
@@ -412,11 +434,12 @@ int main(int argc, char *argv[])
 
 		uint16_t num_records = 0;
     	uint16_t free_space = PAGE_SIZE - PAGE_HEADER_SIZE;
-		uint16_t first_offset = 8;
+		uint16_t first_offset = PAGE_HEADER_SIZE + FILE_HEADER_SIZE;
     	memcpy(pagebuf, &num_records, 2);
     	memcpy(pagebuf + 2, &free_space, 2);
     	memcpy(pagebuf + 4, &reserved_space, 4);
 		memcpy(pagebuf + 8, &first_offset, 2);
+		printf("pagebuf = %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc %xc\n", pagebuf[0], pagebuf[1],pagebuf[2], pagebuf[3], pagebuf[4], pagebuf[5], pagebuf[6], pagebuf[7], pagebuf[8], pagebuf[9], pagebuf[10]);
 		writePage(fp, pagebuf, 0);
     }
 
