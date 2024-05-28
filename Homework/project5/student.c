@@ -151,8 +151,25 @@ void writeRecToPagebuf(char *pagebuf, const char *recordbuf){
 	int offset_location;
 	if (record_num == 0) offset_location = 8;
 	else offset_location = 8 + 2 * (record_num - 1);
- 
 	
+	// record start index
+	uint16_t record_start;
+	memcpy(&record_start, pagebuf + offset_location, 2);
+	
+	// write record data in pagebuf
+	record_start = record_start % PAGE_SIZE - FILE_HEADER_SIZE;
+	memcpy(pagebuf + record_start, recordbuf, strlen(recordbuf));
+}
+
+void writeRecToPagebufByRecordNum(char *pagebuf, const char *recordbuf, int recordnum){
+	// last record's offset location in header
+	int offset_location;
+	if (recordnum == 0){
+		memcpy(pagebuf + PAGE_HEADER_SIZE, recordbuf, strlen(recordbuf));
+		return;
+	}
+	else offset_location = 8 + 2 * (recordnum - 1);
+ 
 	// record start index
 	uint16_t record_start;
 	memcpy(&record_start, pagebuf + offset_location, 2);
@@ -289,7 +306,7 @@ int searchByID(FILE *fp, char *keyval, char *recordbuf){
 	int16_t page_num;
 	memcpy(&page_num, fileheaderbuf, 2);
 
-	for (int i = 0 ; i < page_num; i++){
+	for (uint16_t i = 0 ; i < page_num; i++){
 		// 순차적으로 페이지 read
 		readPage(fp, pagebuf, i);
 
@@ -297,7 +314,7 @@ int searchByID(FILE *fp, char *keyval, char *recordbuf){
 		int16_t record_num;
 		memcpy(&record_num, pagebuf, 2);
 			
-		for (int j = 0; j < record_num; j++){
+		for (uint16_t j = 0; j < record_num; j++){
 			// j번째 레코드 읽기
 			getRecFromPagebuf(pagebuf, recordbuf, j);
 
@@ -305,12 +322,13 @@ int searchByID(FILE *fp, char *keyval, char *recordbuf){
 			STUDENT s;
 			unpack(recordbuf, &s);
 
-			if (s.id == keyval){
+			if (strcmp(s.id, keyval) == 0){
 				pack(recordbuf, &s);
 
 				// last removed record data
-				uint16_t last_page_num ;
-				uint16_t last_record_num ;
+				int16_t last_page_num ;
+				int16_t last_record_num ;
+
 				memcpy(&last_page_num, fileheaderbuf + 2, 2);
 				memcpy(&last_record_num, fileheaderbuf + 4, 2);
 
@@ -318,14 +336,15 @@ int searchByID(FILE *fp, char *keyval, char *recordbuf){
 				memcpy(fileheaderbuf + 2, &i, 2 ); // page num
 				memcpy(fileheaderbuf + 4, &j, 2 ); // record num
 				writeFileHeader(fp, fileheaderbuf);
-
+				
 				// fix record data
 				char removedrecordbuf[MAX_RECORD_SIZE] = {0};
 				memcpy(removedrecordbuf, "*", 1);
 				memcpy(removedrecordbuf + 1, &last_page_num, 2); // page_num
 				memcpy(removedrecordbuf + 3, &last_record_num, 2); // record_num
 
-				writeRecToPagebuf(pagebuf, removedrecordbuf);
+				// write record buf to page buf by record number
+				writeRecToPagebufByRecordNum(pagebuf, removedrecordbuf, j);
 				writePage(fp, pagebuf, i);
 
 				return 1;
@@ -428,7 +447,7 @@ void delete(FILE *fp, char *keyval){
 	// id로 레코드 파일 찾아서 버퍼에 저장
 	int ret = searchByID(fp, keyval, recordbuf);
 	if (ret == 0){
-		printf("[*] Error : Invalid keyval\n");
+		printf("[*] Error : Invalid keyval. SEARCH ERROR\n");
         exit(1);
 	}
 
@@ -486,13 +505,12 @@ int main(int argc, char *argv[])
 		char fileheaderbuf[FILE_HEADER_SIZE] = {0};
 		uint16_t num_pages = 1;
     	uint32_t reserved_space = 0;
-		uint16_t linked_list_init = -1;
+		int16_t init_num = -1;
 
 		memcpy(fileheaderbuf, &num_pages, 2);
-		// linked_list : header's page_num init
-		memcpy(fileheaderbuf + 2, &linked_list_init, 2);
-		// linked_list : header's record_num init
-		memcpy(fileheaderbuf + 4, &linked_list_init, 2);
+		// linked_list : header's page_num, record_num init
+		memcpy(fileheaderbuf + 2, &init_num, 2);
+		memcpy(fileheaderbuf + 4, &init_num, 2);
 		writeFileHeader(fp, fileheaderbuf);
 
 		// init 0 page
@@ -547,7 +565,7 @@ int main(int argc, char *argv[])
 		char* fieldname = strtok(argv[3], "=");
 		char* keyval = strtok(NULL, "=");
 
-		if (fieldname != "ID"){
+		if (strcmp(fieldname, "ID") != 0){
 			printf("[*] Error : Invalid argc. Field Name is not 'ID'\n");
 			exit(1);
 		}
