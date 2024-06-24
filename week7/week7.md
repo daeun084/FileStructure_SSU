@@ -47,6 +47,17 @@ fixed-length records를 제거하는 것 보다 더 복잡함 <br>
 8byte 크기의 삭제 레코드가 존재하고, 레코드의 최소 저장 단위가 20byte라면 해당 레코드는 영원히 사용되지 않음 -> 👉`External Fragmentation`👈
 
 - storage compaction
+  - 주기적으로 메모리를 제거함
 - 이웃하는 레코드와 합쳐서 더 큰 공간으로 만들기
-- fragmentation이 덜 발생하도록 placement strategies를 이용해 할당 사이즈에 주의하기
+- fragmentation이 덜 발생하도록 `placement strategies`를 이용해 할당 사이즈에 주의하기
   - placement strategies
+    - first-fit
+      - 할당하려는 레코드보다 사이즈가 같거나 큰 처음 발견한 레코드를 할당
+    - best-fit
+      - 할당하려는 레코드의 사이즈와 사이즈가 가장 유사한 레코드를 할당
+      - 아주 작은 공간이 남을 수 있음 -> Internal fragmentation 유발
+      - sorting이 필요하며, n개의 레코드를 다 확인해야 함
+    - worst-fit
+      - 가장 큰 공간을 가진 레코드를 할당함
+      - 시간상 뒤 쪽에서 fragmentation이 발생함
+      - 마찬가지로 sorting이 필요하며, n개의 레코드를 다 확인해야 함
